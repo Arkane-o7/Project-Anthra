@@ -8,3 +8,10 @@ alembic
 pydantic
 python-dotenv
 pika
+python-multipart
+playwright
+websockets
+openai
+anthropic
+pydub
+speechrecognition
