@@ -1,5 +1,4 @@
 import asyncio
-import websockets
 import json
 import uuid
 from typing import Dict, Any, Set
@@ -116,23 +115,23 @@ class VoiceAccessibilityService:
         """Format page content for text-to-speech"""
         reading_parts = []
         
-        if page_content.title:
+        if hasattr(page_content, 'title') and page_content.title:
             reading_parts.append(f"Page title: {page_content.title}")
         
-        if page_content.text:
+        if hasattr(page_content, 'text') and page_content.text:
             # Limit text length for better UX
             text = page_content.text[:500]
             if len(page_content.text) > 500:
                 text += "... and more content available."
             reading_parts.append(f"Page content: {text}")
         
-        if page_content.links:
+        if hasattr(page_content, 'links') and page_content.links:
             link_count = len(page_content.links)
             if link_count > 0:
                 reading_parts.append(f"Found {link_count} links on this page.")
                 # Read first 3 links
                 for i, link in enumerate(page_content.links[:3]):
-                    if link.get("text"):
+                    if isinstance(link, dict) and link.get("text"):
                         reading_parts.append(f"Link {i+1}: {link['text']}")
         
         return " ".join(reading_parts) if reading_parts else "No content found on this page."
@@ -153,31 +152,38 @@ class VoiceAccessibilityService:
 class WebSocketVoiceHandler:
     def __init__(self, voice_service: VoiceAccessibilityService):
         self.voice_service = voice_service
-        self.connected_clients: Set[websockets.WebSocketServerProtocol] = set()
+        self.connected_clients: Set = set()
     
-    async def register_client(self, websocket: websockets.WebSocketServerProtocol):
+    async def register_client(self, websocket):
         """Register a new WebSocket client"""
-        self.connected_clients.add(websocket)
-        
-        # Start a new session for this client
-        session_id = await self.voice_service.start_session()
-        
-        # Send session info to client
-        await websocket.send(json.dumps({
-            "type": "session_started",
-            "session_id": session_id,
-            "message": "Voice accessibility session started. You can now speak commands."
-        }))
-        
-        return session_id
+        try:
+            self.connected_clients.add(websocket)
+            
+            # Start a new session for this client
+            session_id = await self.voice_service.start_session()
+            
+            # Send session info to client
+            await websocket.send_text(json.dumps({
+                "type": "session_started",
+                "session_id": session_id,
+                "message": "Voice accessibility session started. You can now speak commands."
+            }))
+            
+            return session_id
+        except Exception as e:
+            print(f"Error in register_client: {str(e)}")
+            print(f"Error type: {type(e)}")
+            import traceback
+            traceback.print_exc()
+            raise
     
-    async def unregister_client(self, websocket: websockets.WebSocketServerProtocol, session_id: str = None):
+    async def unregister_client(self, websocket, session_id: str = None):
         """Unregister a WebSocket client"""
         self.connected_clients.discard(websocket)
         if session_id:
             await self.voice_service.end_session(session_id)
     
-    async def handle_message(self, websocket: websockets.WebSocketServerProtocol, message: str, session_id: str):
+    async def handle_message(self, websocket, message: str, session_id: str):
         """Handle incoming WebSocket message"""
         try:
             data = json.loads(message)
@@ -187,31 +193,32 @@ class WebSocketVoiceHandler:
                 command_text = data.get("text", "")
                 response = await self.voice_service.process_voice_command(session_id, command_text)
                 
-                await websocket.send(json.dumps({
+                await websocket.send_text(json.dumps({
                     "type": "command_response",
                     "response": response.dict()
                 }))
             
             elif message_type == "get_status":
                 status = await self.voice_service.get_session_status(session_id)
-                await websocket.send(json.dumps({
+                await websocket.send_text(json.dumps({
                     "type": "status_response",
                     "status": status
                 }))
             
             else:
-                await websocket.send(json.dumps({
+                await websocket.send_text(json.dumps({
                     "type": "error",
                     "message": f"Unknown message type: {message_type}"
                 }))
                 
         except json.JSONDecodeError:
-            await websocket.send(json.dumps({
+            await websocket.send_text(json.dumps({
                 "type": "error",
                 "message": "Invalid JSON message"
             }))
         except Exception as e:
-            await websocket.send(json.dumps({
+            print(f"Error in handle_message: {str(e)}")
+            await websocket.send_text(json.dumps({
                 "type": "error",
                 "message": f"Error processing message: {str(e)}"
             }))
